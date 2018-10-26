@@ -28,6 +28,12 @@ using runtime::StorageScope;
 using runtime::ThreadScope;
 using intrinsic::tvm_address_of;
 
+std::unordered_map<const Variable *, Buffer> *MemoryToBuffer() {
+  static std::unordered_map<const Variable *, Buffer> *ptr_memory_to_buffer =
+      new std::unordered_map<const Variable *, Buffer>();
+  return ptr_memory_to_buffer;
+}
+
 class StorageFlattener : public IRMutator {
  public:
   explicit StorageFlattener(Map<Tensor, Buffer> extern_buffer,
@@ -117,6 +123,9 @@ class StorageFlattener : public IRMutator {
           {e.buffer->data, op->value},
           Call::Intrinsic));
     } else {
+      if (!MemoryToBuffer()->count(e.buffer->data.get()))
+        MemoryToBuffer()->insert(
+            std::make_pair(e.buffer->data.get(), e.buffer));
       return e.buffer.vstore(e.RelIndex(op->args), op->value);
     }
   }
@@ -187,6 +196,8 @@ class StorageFlattener : public IRMutator {
           key.GetName(), skey.to_string(),
           align, 0);
 
+      MemoryToBuffer()->insert(std::make_pair(e.buffer->data.get(), e.buffer));
+
       buf_map_[key] = e;
       Stmt body = this->Mutate(op->body);
       buf_map_[key].released = true;
@@ -254,6 +265,9 @@ class StorageFlattener : public IRMutator {
       const BufferEntry& e = it->second;
       CHECK(!e.released)
           << "Read a buffer that is already out of scope";
+      if (!MemoryToBuffer()->count(e.buffer->data.get()))
+        MemoryToBuffer()->insert(
+            std::make_pair(e.buffer->data.get(), e.buffer));
       return e.buffer.vload(e.RelIndex(op->args), e.buffer->dtype);
     } else {
       return expr;

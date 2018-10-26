@@ -367,6 +367,7 @@ Stmt BuildStmt(Schedule sch,
   if (loop_partition) {
     stmt = ir::LoopPartition(stmt, config->partition_const_loop);
   }
+
   stmt = ir::VectorizeLoop(stmt);
   stmt = ir::InjectVirtualThread(stmt);
   stmt = ir::InjectDoubleBuffer(stmt, config->double_buffer_split_loop);
@@ -379,6 +380,8 @@ Stmt BuildStmt(Schedule sch,
   stmt = ir::LowerStorageAccessInfo(stmt);
   stmt = ir::RemoveNoOp(stmt);
   stmt = ir::RewriteUnsafeSelect(stmt);
+
+  stmt = ir::InstrumentBoundCheckers(stmt);
 
   return stmt;
 }

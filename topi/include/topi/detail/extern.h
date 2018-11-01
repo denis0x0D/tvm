@@ -135,6 +135,10 @@ inline Expr call_packed(Array<Expr> args) {
                              args, tvm::ir::Call::CallType::Intrinsic);
 }
 
+inline Expr call_packed(Type t, Array<Expr> args) {
+  return tvm::ir::Call::make(t, tvm::ir::intrinsic::tvm_call_packed, args,
+                             tvm::ir::Call::CallType::Intrinsic);
+}
 }  // namespace detail
 }  // namespace topi
 #endif  // TOPI_DETAIL_EXTERN_H_

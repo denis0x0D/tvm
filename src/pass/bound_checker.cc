@@ -95,8 +95,20 @@ class BoundChecker : public IRMutator {
          memory_accesses_indexes(memory_accesses_indexes) {}
 
    Stmt Mutate_(const Store *op, const Stmt &s) final {
-     std::cerr << MakeCondition (op) << std::endl;
-     IRMutator::Mutate_(op, s);
+     // std::cerr << MakeCondition (op) << std::endl;
+     if (CanInstrument(op)) {
+       std::cerr << "can instrument " << std::endl;
+       Expr condition = MakeCondition(op);
+       Stmt nop = Evaluate::make(1);
+       Stmt then_case =
+           Store::make(op->buffer_var, op->value, op->index, op->predicate);
+       Stmt else_case =
+           AssertStmt::make(condition, StringImm::make(error_message), nop);
+       Stmt body = IfThenElse::make(condition, then_case, else_case);
+       std::cerr << body << std::endl;
+//       IRMutator::Mutate(body);
+       return body;
+     }
      return s;
    }
 
@@ -116,6 +128,9 @@ class BoundChecker : public IRMutator {
         }
       }
       */
+   bool CanInstrument(const Node *op) {
+     return memory_accesses.count(op) && memory_accesses_indexes.count(op);
+   }
 
    ~BoundChecker() {}
 

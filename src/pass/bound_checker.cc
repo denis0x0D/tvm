@@ -64,17 +64,7 @@ public:
     IRVisitor::Visit_(op);
   }
 
-  ~BoundCheckersCollector() {
-    std::for_each(memory_accesses.begin(), memory_accesses.end(),
-                  [](const std::pair<const Node *,
-                                     std::vector<std::shared_ptr<IRange>>> &i) {
-                    std::cerr << "node " << i.first << std::endl;
-                    for (int j = 0; j < i.second.size(); ++j) {
-                      std::cerr << i.second[j]->begin << " " << i.second[j]->end
-                                << std::endl;
-                    }
-                  });
-  }
+  ~BoundCheckersCollector() {}
 
   std::unordered_map<const Node *, std::vector<std::shared_ptr<IRange>>>
       memory_accesses;
@@ -95,9 +85,7 @@ class BoundChecker : public IRMutator {
          memory_accesses_indexes(memory_accesses_indexes) {}
 
    Stmt Mutate_(const Store *op, const Stmt &s) final {
-     // std::cerr << MakeCondition (op) << std::endl;
      if (CanInstrument(op)) {
-       std::cerr << "can instrument " << std::endl;
        Expr condition = MakeCondition(op);
        Stmt nop = Evaluate::make(1);
        Stmt then_case =
@@ -105,29 +93,11 @@ class BoundChecker : public IRMutator {
        Stmt else_case =
            AssertStmt::make(condition, StringImm::make(error_message), nop);
        Stmt body = IfThenElse::make(condition, then_case, else_case);
-       std::cerr << body << std::endl;
-//       IRMutator::Mutate(body);
        return body;
      }
      return s;
    }
-
-   /*   Stmt Mutate_(const For *op, const Stmt &s) final {
-        if (op->body.as<Store>() || op->body.as<Block>()) {
-          std::cout << " Instrument for body is store " << std::endl;
-          Expr condition = MakeCondition(op);
-          Stmt nop = Evaluate::make(1);
-          Stmt then_case = op->body;
-          Stmt else_case =
-              AssertStmt::make(condition, StringImm::make(error_message), nop);
-          Stmt body = IfThenElse::make(condition, then_case, else_case);
-          return For::make(op->loop_var, op->min, op->extent, op->for_type,
-                           op->device_api, body);
-        } else {
-          return IRMutator::Mutate_(op, op->body);
-        }
-      }
-      */
+   
    bool CanInstrument(const Node *op) {
      return memory_accesses.count(op) && memory_accesses_indexes.count(op);
    }
@@ -141,9 +111,9 @@ class BoundChecker : public IRMutator {
        std::vector<Expr> indexes = memory_accesses_indexes[node];
 
        if (!ranges.size() || !indexes.size()) {
-         std::cerr << "size is null" << std::endl;
          return Expr();
        }
+
        Expr upper_bound = ranges[0]->end;
        for (size_t i = 1; i < ranges.size(); ++i) {
          upper_bound = Mul::make(upper_bound, ranges[i]->end);

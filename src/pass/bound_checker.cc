@@ -30,10 +30,21 @@ class BoundChecker : public IRMutator {
      return IRMutator::Mutate_(op, s);
    }
 
+   Expr Mutate_(const Call *op, const Expr &ex) final {
+     if (proceed_store && op->is_intrinsic(intrinsic::tvm_if_then_else)) {
+       unsafe_rewrited = true;
+     }
+     return IRMutator::Mutate_(op, ex);
+   }
+
    Stmt Mutate_(const Store *op, const Stmt &s) final {
      bound_collector.clear();
+     proceed_store = true;
+     unsafe_rewrited = false;
      IRMutator::Mutate_(op, s);
-     if (CanInstrument(op->index, op->buffer_var)) {
+     proceed_store = false;
+     // Store should has at least one load.
+     if (CanInstrument(op->index, op->buffer_var) && bound_collector.size()) {
        Collect(op->index, op->buffer_var);
        Expr condition = MakeCondition();
        Stmt nop = Evaluate::make(1);
@@ -66,7 +77,9 @@ class BoundChecker : public IRMutator {
 
    bool CanInstrument(const Expr &index, const VarExpr &buffer_var) const {
      return index.defined() && buffer_var.defined() &&
-            MemoryToBuffer()->count(buffer_var.get());
+            MemoryToBuffer()->count(buffer_var.get()) &&
+            // FIXME. Should we implement check when index is ramp ?
+            index.type().is_scalar() && !unsafe_rewrited;
    }
 
    void Collect(Expr index, VarExpr buffer_var) {
@@ -75,34 +88,32 @@ class BoundChecker : public IRMutator {
    }
 
    Expr MakeCondition() {
-     if (bound_collector.size()) {
-       Expr condition;
-       for (size_t i = 0; i < bound_collector.size(); ++i) {
-         std::pair<Expr, Array<Expr>> buffer_to_mem = bound_collector[i];
+     Expr condition;
+     for (size_t i = 0; i < bound_collector.size(); ++i) {
+       std::pair<Expr, Array<Expr>> buffer_to_mem = bound_collector[i];
 
-         Expr upper_bound;
-         if (buffer_to_mem.second.size()) {
-           Array<Expr> shape = buffer_to_mem.second;
-           upper_bound = shape[0];
-           for (size_t j = 1; j < shape.size(); ++j) {
-             upper_bound = Mul::make(upper_bound, shape[j]);
-           }
-         } else {
-           // An error.
-           return Expr ();
+       Expr upper_bound;
+       if (buffer_to_mem.second.size()) {
+         Array<Expr> shape = buffer_to_mem.second;
+         upper_bound = shape[0];
+         for (size_t j = 1; j < shape.size(); ++j) {
+           upper_bound = Mul::make(upper_bound, shape[j]);
          }
-
-         Expr index = buffer_to_mem.first;
-         Expr current_condition = LT::make(index, upper_bound);
-         condition =
-             !i ? current_condition : And::make(condition, current_condition);
+       } else {
+         // An error.
+         return Expr();
        }
-       return condition;
+
+       Expr index = buffer_to_mem.first;
+       Expr current_condition = LT::make(index, upper_bound);
+       condition =
+           !i ? current_condition : And::make(condition, current_condition);
      }
-     // An error.
-     return Expr();
+     return condition;
    }
 
+   bool proceed_store{false};
+   bool unsafe_rewrited{false};
    std::vector<std::pair<Expr, Array<Expr>>> bound_collector;
    const char *const error_message = "OUT OF BOUNDS";
 };

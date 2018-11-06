@@ -17,11 +17,18 @@
 namespace tvm {
 namespace ir {
 
-extern std::unordered_map<const Variable *, Buffer> *MemoryToBuffer();
+extern std::unordered_map<const Variable *, Array<Expr>> *MemoryToBuffer();
 
 class BoundChecker : public IRMutator {
  public:
    BoundChecker() {}
+
+   Stmt Mutate_(const Allocate *op, const Stmt &s) final {
+     if (UpdateIsNeeded(op->buffer_var)) {
+       Update(op->buffer_var, op->extents);
+     }
+     return IRMutator::Mutate_(op, s);
+   }
 
    Stmt Mutate_(const Store *op, const Stmt &s) final {
      bound_collector.clear();
@@ -48,14 +55,23 @@ class BoundChecker : public IRMutator {
    }
 
  private:
-   bool CanInstrument(Expr index, VarExpr buffer_var) {
+   bool UpdateIsNeeded(const VarExpr &buffer_var) const {
+     return (buffer_var.defined() && MemoryToBuffer()->count(buffer_var.get()));
+     // TODO: check for equal shape.
+   }
+
+   void Update(const VarExpr &buffer_var, const Array<Expr> &new_shape) {
+     (*MemoryToBuffer())[buffer_var.get()] = new_shape;
+   }
+
+   bool CanInstrument(const Expr &index, const VarExpr &buffer_var) const {
      return index.defined() && buffer_var.defined() &&
             MemoryToBuffer()->count(buffer_var.get());
    }
 
    void Collect(Expr index, VarExpr buffer_var) {
-     bound_collector.push_back(std::make_pair(
-         index, (*MemoryToBuffer())[buffer_var.get()]->shape));
+     bound_collector.push_back(
+         std::make_pair(index, (*MemoryToBuffer())[buffer_var.get()]));
    }
 
    Expr MakeCondition() {

@@ -28,9 +28,10 @@ using runtime::StorageScope;
 using runtime::ThreadScope;
 using intrinsic::tvm_address_of;
 
-std::unordered_map<const Variable *, Buffer> *MemoryToBuffer() {
-  static std::unordered_map<const Variable *, Buffer> *ptr_memory_to_buffer =
-      new std::unordered_map<const Variable *, Buffer>();
+std::unordered_map<const Variable *, Array<Expr>> *MemoryToBuffer() {
+  static std::unordered_map<const Variable *, Array<Expr>>
+      *ptr_memory_to_buffer =
+          new std::unordered_map<const Variable *, Array<Expr>>();
   return ptr_memory_to_buffer;
 }
 
@@ -125,7 +126,7 @@ class StorageFlattener : public IRMutator {
     } else {
       if (!MemoryToBuffer()->count(e.buffer->data.get()))
         MemoryToBuffer()->insert(
-            std::make_pair(e.buffer->data.get(), e.buffer));
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
       return e.buffer.vstore(e.RelIndex(op->args), op->value);
     }
   }
@@ -196,7 +197,10 @@ class StorageFlattener : public IRMutator {
           key.GetName(), skey.to_string(),
           align, 0);
 
-      MemoryToBuffer()->insert(std::make_pair(e.buffer->data.get(), e.buffer));
+      // Save created buffer, we will check it later, the shape could be
+      // updated.
+      MemoryToBuffer()->insert(
+          std::make_pair(e.buffer->data.get(), e.buffer->shape));
 
       buf_map_[key] = e;
       Stmt body = this->Mutate(op->body);
@@ -267,7 +271,7 @@ class StorageFlattener : public IRMutator {
           << "Read a buffer that is already out of scope";
       if (!MemoryToBuffer()->count(e.buffer->data.get()))
         MemoryToBuffer()->insert(
-            std::make_pair(e.buffer->data.get(), e.buffer));
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
       return e.buffer.vload(e.RelIndex(op->args), e.buffer->dtype);
     } else {
       return expr;

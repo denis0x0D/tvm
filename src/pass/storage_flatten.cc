@@ -124,11 +124,16 @@ class StorageFlattener : public IRMutator {
           {e.buffer->data, op->value},
           Call::Intrinsic));
     } else {
-      if (!MemoryToBuffer()->count(e.buffer->data.get()))
+      if (!MemoryToBuffer()->count(e.buffer->data.get())) {
         MemoryToBuffer()->insert(
             std::make_pair(e.buffer->data.get(), e.buffer->shape));
-      return e.buffer.vstore(e.RelIndex(op->args), op->value);
+      } else {
+        MemoryToBuffer()->erase(MemoryToBuffer()->find(e.buffer->data.get()));
+        MemoryToBuffer()->insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      }
     }
+    return e.buffer.vstore(e.RelIndex(op->args), op->value);
   }
 
   Stmt Mutate_(const Realize* op, const Stmt& s) final {
@@ -269,9 +274,14 @@ class StorageFlattener : public IRMutator {
       const BufferEntry& e = it->second;
       CHECK(!e.released)
           << "Read a buffer that is already out of scope";
-      if (!MemoryToBuffer()->count(e.buffer->data.get()))
+      if (!MemoryToBuffer()->count(e.buffer->data.get())) {
         MemoryToBuffer()->insert(
             std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      } else {
+        MemoryToBuffer()->erase(MemoryToBuffer()->find(e.buffer->data.get()));
+        MemoryToBuffer()->insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      }
       return e.buffer.vload(e.RelIndex(op->args), e.buffer->dtype);
     } else {
       return expr;

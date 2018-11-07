@@ -47,13 +47,16 @@ class BoundChecker : public IRMutator {
      if (CanInstrument(op->index, op->buffer_var) && bound_collector.size()) {
        Collect(op->index, op->buffer_var);
        Expr condition = MakeCondition();
-       Stmt nop = Evaluate::make(1);
-       Stmt then_case =
-           Store::make(op->buffer_var, op->value, op->index, op->predicate);
-       Stmt else_case =
-           AssertStmt::make(condition, StringImm::make(error_message), nop);
-       Stmt body = IfThenElse::make(condition, then_case, else_case);
-       return body;
+       // TODO. Handle zero shape.
+       if (!condition.as<StringImm>()) {
+         Stmt nop = Evaluate::make(1);
+         Stmt then_case =
+             Store::make(op->buffer_var, op->value, op->index, op->predicate);
+         Stmt else_case =
+             AssertStmt::make(condition, StringImm::make(error_message), nop);
+         Stmt body = IfThenElse::make(condition, then_case, else_case);
+         return body;
+       }
      }
      return s;
    }
@@ -101,7 +104,7 @@ class BoundChecker : public IRMutator {
          }
        } else {
          // An error.
-         return Expr();
+         return StringImm::make("zero shape");
        }
 
        Expr index = buffer_to_mem.first;
@@ -119,6 +122,5 @@ class BoundChecker : public IRMutator {
 };
 
 Stmt InstrumentBoundCheckers(Stmt stmt) { return BoundChecker().Mutate(stmt); }
-
 }  // namespace ir
 }  // namespace tvm

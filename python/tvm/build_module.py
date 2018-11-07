@@ -294,7 +294,8 @@ def lower(sch,
           args,
           name="default_function",
           binds=None,
-          simple_mode=False):
+          simple_mode=False,
+          instrument_bound_checkers=False):
     """Lowering step before build into target.
 
     Parameters
@@ -373,7 +374,9 @@ def lower(sch,
     stmt = ir_pass.LowerStorageAccessInfo(stmt)
     stmt = ir_pass.RemoveNoOp(stmt)
     stmt = ir_pass.RewriteUnsafeSelect(stmt)
-    stmt = ir_pass.InstrumentBoundCheckers(stmt)
+    # Instrument BoundCheckers
+    if instrument_bound_checkers:
+        stmt = ir_pass.InstrumentBoundCheckers(stmt)
     for f in lower_phase3:
         stmt = f(stmt)
     if simple_mode:
@@ -460,7 +463,8 @@ def build(inputs,
           target=None,
           target_host=None,
           name="default_function",
-          binds=None):
+          binds=None,
+          instrument_bound_checkers=False):
     """Build a function with arguments as signature. Code will be generated
     for devices coupled with target information.
 
@@ -535,7 +539,8 @@ def build(inputs,
             raise ValueError("args must be given for build from schedule")
         flist = lower(inputs, args,
                       name=name,
-                      binds=binds)
+                      binds=binds,
+                      instrument_bound_checkers=instrument_bound_checkers)
         if isinstance(flist, container.LoweredFunc):
             flist = [flist]
     elif isinstance(inputs, container.LoweredFunc):

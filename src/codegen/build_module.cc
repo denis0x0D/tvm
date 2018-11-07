@@ -381,8 +381,6 @@ Stmt BuildStmt(Schedule sch,
   stmt = ir::RemoveNoOp(stmt);
   stmt = ir::RewriteUnsafeSelect(stmt);
 
-  stmt = ir::InstrumentBoundCheckers(stmt);
-
   return stmt;
 }
 

@@ -18,6 +18,7 @@
 #include "arg_binder.h"
 #include "../arithmetic/compute_expr.h"
 #include "../runtime/thread_storage_scope.h"
+#include "bound_checker.h"
 
 namespace tvm {
 namespace ir {
@@ -117,8 +118,20 @@ class StorageFlattener : public IRMutator {
           {e.buffer->data, op->value},
           Call::Intrinsic));
     } else {
-      return e.buffer.vstore(e.RelIndex(op->args), op->value);
+      std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
+      if (!BoundCheckerManager::Global()->mem_to_buffer.count(
+              e.buffer->data.get())) {
+        BoundCheckerManager::Global()->mem_to_buffer.insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      } else {
+        BoundCheckerManager::Global()->mem_to_buffer.erase(
+            BoundCheckerManager::Global()->mem_to_buffer.find(
+                e.buffer->data.get()));
+        BoundCheckerManager::Global()->mem_to_buffer.insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      }
     }
+    return e.buffer.vstore(e.RelIndex(op->args), op->value);
   }
 
   Stmt Mutate_(const Realize* op, const Stmt& s) final {
@@ -187,6 +200,14 @@ class StorageFlattener : public IRMutator {
           key.GetName(), skey.to_string(),
           align, 0);
 
+      // Save created buffer, we will check it later, the shape could be
+      // updated.
+      {
+        std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
+        BoundCheckerManager::Global()->mem_to_buffer.insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      }
+
       buf_map_[key] = e;
       Stmt body = this->Mutate(op->body);
       buf_map_[key].released = true;
@@ -254,6 +275,19 @@ class StorageFlattener : public IRMutator {
       const BufferEntry& e = it->second;
       CHECK(!e.released)
           << "Read a buffer that is already out of scope";
+
+      std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
+      if (!BoundCheckerManager::Global()->mem_to_buffer.count(
+              e.buffer->data.get())) {
+        BoundCheckerManager::Global()->mem_to_buffer.insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      } else {
+        BoundCheckerManager::Global()->mem_to_buffer.erase(
+            BoundCheckerManager::Global()->mem_to_buffer.find(
+                e.buffer->data.get()));
+        BoundCheckerManager::Global()->mem_to_buffer.insert(
+            std::make_pair(e.buffer->data.get(), e.buffer->shape));
+      }
       return e.buffer.vload(e.RelIndex(op->args), e.buffer->dtype);
     } else {
       return expr;
@@ -449,6 +483,10 @@ class StorageFlattener : public IRMutator {
 Stmt StorageFlatten(Stmt stmt,
                     Map<Tensor, Buffer> extern_buffer,
                     int cache_line_size) {
+  {
+    std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
+    BoundCheckerManager::Global()->mem_to_buffer.clear();
+  }
   stmt = StorageFlattener(extern_buffer, cache_line_size).Mutate(stmt);
   return stmt;
 }

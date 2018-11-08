@@ -155,5 +155,6 @@ REGISTER_PASS1(CombineContextCall);
 REGISTER_PASS2(VerifyMemory);
 REGISTER_PASS2(VerifyGPUCode);
 REGISTER_PASS1(DecorateDeviceScope);
+REGISTER_PASS1(InstrumentBoundCheckers);
 }  // namespace ir
 }  // namespace tvm

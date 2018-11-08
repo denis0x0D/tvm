@@ -235,6 +235,13 @@ Stmt UnrollLoop(Stmt stmt,
 Stmt VectorizeLoop(Stmt stmt);
 
 /*!
+* \brief instruments bound checkers
+* \param stmt The statment to be instrumented.
+* \return Instrumented Stmt.
+*/
+Stmt InstrumentBoundCheckers(Stmt stmt);
+
+/*!
  * \brief Inject virtual thread loops into stmt.
  * \param stmt The statment to be transformed.
  * \return Transformed stmt.

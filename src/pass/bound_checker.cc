@@ -16,9 +16,25 @@
 namespace tvm {
 namespace ir {
 
+class BoundCollector : public IRVisitor {
+public:
+  BoundCollector() {}
+
+  void Visit_(const AttrStmt *op) {
+    if (op->attr_key == ir::attr::buffer_bound) {
+      if (const Variable *key = op->node.as<Variable>()) {
+        mem_to_shape[key] = op->value;
+      }
+    }
+    IRVisitor::Visit_(op);
+  }
+  std::unordered_map<const Variable *, Expr> mem_to_shape;
+};
+
 class BoundChecker : public IRMutator {
- public:
-  BoundChecker() {}
+public:
+  BoundChecker(const std::unordered_map<const Variable *, Expr> &mem_to_shape)
+      : mem_to_shape(mem_to_shape) {}
 
   Stmt Mutate_(const Allocate *op, const Stmt &s) final {
     if (UpdateIsNeeded(op->buffer_var)) {
@@ -35,13 +51,14 @@ class BoundChecker : public IRMutator {
   }
 
   Stmt Mutate_(const Store *op, const Stmt &s) final {
-    bound_collector.clear();
+    store_scope_bound_collector.clear();
     proceed_store = true;
     unsafe_rewrited = false;
     IRMutator::Mutate_(op, s);
     proceed_store = false;
     // Store should has at least one load.
-    if (CanInstrument(op->index, op->buffer_var) && bound_collector.size()) {
+    if (CanInstrument(op->index, op->buffer_var) &&
+        store_scope_bound_collector.size()) {
       Collect(op->index, op->buffer_var);
       Expr condition = MakeCondition();
       if (!condition.as<StringImm>()) {
@@ -66,23 +83,25 @@ class BoundChecker : public IRMutator {
 
  private:
   bool UpdateIsNeeded(const VarExpr &buffer_var) const {
-    std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
-    return (
-        buffer_var.defined() &&
-        BoundCheckerManager::Global()->mem_to_buffer.count(buffer_var.get()));
+    return (buffer_var.defined() && mem_to_shape.count(buffer_var.get()));
   }
 
   void Update(const VarExpr &buffer_var, const Array<Expr> &new_shape,
               const Type &type) {
-    std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
     // Make sure we catch the actual shape. The type could has lanes > 1.
     Array<Expr> actual_shape;
     for (size_t i = 0; i < new_shape.size(); ++i)
       // Cast to unsigned to avoid integer overlow at frist.
       actual_shape.push_back(Mul::make(make_const(UInt(64), type.lanes()),
                                        Cast::make(UInt(64), new_shape[i])));
-    BoundCheckerManager::Global()->mem_to_buffer[buffer_var.get()] =
-        actual_shape;
+
+    // FIXME. Embedd it into loop ahead.
+    Expr shape = actual_shape[0];
+    for (size_t i = 1; i < actual_shape.size(); ++i) {
+      shape = Mul::make(shape, actual_shape[i]);
+    }
+
+    mem_to_shape[buffer_var.get()] = shape;
   }
 
   bool IndexIsValid(const Expr &index) const {
@@ -99,37 +118,21 @@ class BoundChecker : public IRMutator {
   }
 
   bool CanInstrument(const Expr &index, const VarExpr &buffer_var) const {
-    std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
-    return buffer_var.defined() &&
-           BoundCheckerManager::Global()->mem_to_buffer.count(
-               buffer_var.get()) &&
+    return buffer_var.defined() && mem_to_shape.count(buffer_var.get()) &&
            IndexIsValid(index) && !unsafe_rewrited;
   }
 
   void Collect(Expr index, VarExpr buffer_var) {
-    std::lock_guard<std::mutex> lock(BoundCheckerManager::Global()->mutex);
-    bound_collector.push_back(std::make_pair(
-        index, BoundCheckerManager::Global()->mem_to_buffer[buffer_var.get()]));
+    store_scope_bound_collector.push_back(
+        std::make_pair(index, mem_to_shape[buffer_var.get()]));
   }
 
   Expr MakeCondition() {
     Expr condition;
-    for (size_t i = 0; i < bound_collector.size(); ++i) {
-      std::pair<Expr, Array<Expr>> buffer_to_mem = bound_collector[i];
-
-      Expr upper_bound;
-      if (buffer_to_mem.second.size()) {
-        Array<Expr> shape = buffer_to_mem.second;
-        upper_bound = shape[0];
-        for (size_t j = 1; j < shape.size(); ++j) {
-          upper_bound = Mul::make(upper_bound, shape[j]);
-        }
-      } else {
-        // TODO(denis0x0D): Handle this case.
-        return StringImm::make("zero shape");
-      }
-
+    for (size_t i = 0; i < store_scope_bound_collector.size(); ++i) {
+      std::pair<Expr, Expr> buffer_to_mem = store_scope_bound_collector[i];
       Expr index = buffer_to_mem.first;
+      Expr upper_bound = buffer_to_mem.second;
 
       if (const Ramp *ramp_index = index.as<Ramp>()) {
         // In case index is base + stride * i.
@@ -161,12 +164,15 @@ class BoundChecker : public IRMutator {
 
   bool proceed_store{false};
   bool unsafe_rewrited{false};
-  std::vector<std::pair<Expr, Array<Expr>>> bound_collector;
+  std::vector<std::pair<Expr, Expr>> store_scope_bound_collector;
   const char *const error_message = "OUT OF BOUNDS";
+  std::unordered_map<const Variable *, Expr> mem_to_shape;
 };
 
 Stmt InstrumentBoundCheckers(Stmt stmt) {
-  return BoundChecker().Mutate(stmt);
+  BoundCollector bound_collector;
+  bound_collector.Visit(stmt);
+  return BoundChecker(bound_collector.mem_to_shape).Mutate(stmt);
 }
 }  // namespace ir
 }  // namespace tvm

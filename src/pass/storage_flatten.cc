@@ -18,7 +18,6 @@
 #include "arg_binder.h"
 #include "../arithmetic/compute_expr.h"
 #include "../runtime/thread_storage_scope.h"
-#include "bound_checker.h"
 
 namespace tvm {
 namespace ir {
@@ -124,7 +123,7 @@ class StorageFlattener : public IRMutator {
     } else {
       Stmt body = e.buffer.vstore(e.RelIndex(op->args), op->value);
       // Skip if buffer shape size == 0.
-      if (create_bound_attributes && e.buffer->shape.size()) {
+      if (create_bound_attributes && ShapeIsValid(e.buffer->shape)) {
         shape_collector.push_back(
             std::make_pair(e.buffer->data, e.buffer->shape));
         for (size_t i = 0; i < shape_collector.size(); ++i) {
@@ -236,7 +235,7 @@ class StorageFlattener : public IRMutator {
           e.buffer->data, attr::storage_scope,
           StringImm::make(e.buffer->scope), ret);
 
-      if (create_bound_attributes && e.buffer->shape.size()) {
+      if (create_bound_attributes && ShapeIsValid(e.buffer->shape)) {
         ret = AttrStmt::make(e.buffer->data, ir::attr::buffer_bound,
                              MakeBound(e.buffer->shape), ret);
       }
@@ -278,7 +277,7 @@ class StorageFlattener : public IRMutator {
       const BufferEntry& e = it->second;
       CHECK(!e.released)
           << "Read a buffer that is already out of scope";
-      if (create_bound_attributes && e.buffer->shape.size()) {
+      if (create_bound_attributes && ShapeIsValid(e.buffer->shape)) {
         shape_collector.push_back(
             std::make_pair(e.buffer->data, e.buffer->shape));
       }
@@ -458,12 +457,22 @@ class StorageFlattener : public IRMutator {
     }
   };
 
+  bool ShapeIsValid(const Array<Expr> &shape) {
+    if (!shape.size())
+      return false;
+
+    for (size_t i = 0; i < shape.size(); ++i)
+      if (!shape[i].defined() || !shape[i].type().is_scalar() ||
+          is_negative_const(shape[i]))
+        return false;
+    return true;
+  }
+
   Expr MakeBound(const Array<Expr> &shape) {
-    // We already check the shape size to be greater then 0.
-    Expr bound = Cast::make(UInt(64), shape[0]);
-    // FIXME. Cound the shape be less then 0 ? 
+    // We have already checked the shape size to be greater then 0.
+    Expr bound = shape[0];
     for (size_t i = 1; i < shape.size(); ++i)
-      bound = Mul::make(bound, Cast::make(UInt(64), shape[i]));
+      bound = Mul::make(bound, shape[i]);
     return bound;
   }
   // The buffer assignment map

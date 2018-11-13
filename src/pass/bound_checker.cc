@@ -11,7 +11,6 @@
 #include <vector>
 #include <unordered_map>
 #include <utility>
-#include "bound_checker.h"
 
 namespace tvm {
 namespace ir {
@@ -88,19 +87,23 @@ public:
 
   void Update(const VarExpr &buffer_var, const Array<Expr> &new_shape,
               const Type &type) {
-    // Make sure we catch the actual shape. The type could has lanes > 1.
-    Array<Expr> actual_shape;
-    for (size_t i = 0; i < new_shape.size(); ++i)
-      // Cast to unsigned to avoid integer overlow at frist.
-      actual_shape.push_back(Mul::make(make_const(UInt(64), type.lanes()),
-                                       Cast::make(UInt(64), new_shape[i])));
-
-    // FIXME. Embedd it into loop ahead.
-    Expr shape = actual_shape[0];
-    for (size_t i = 1; i < actual_shape.size(); ++i) {
-      shape = Mul::make(shape, actual_shape[i]);
+    // Sanity check at first.
+    if (!new_shape.size())
+      return;
+    for (size_t i = 0; i < new_shape.size(); ++i) {
+      if (!new_shape.defined() || !new_shape[i].type().is_scalar() ||
+          is_negative_const(new_shape[i])) {
+        return;
+      }
     }
 
+    // Make sure we catch the actual shape. The type could has lanes > 1.
+    Expr shape = Cast::make(UInt(64), new_shape[0]);
+    for (size_t i = 1; i < new_shape.size(); ++i) {
+      // Cast to unsigned to avoid integer overlow at frist.
+      shape = Mul::make(shape, Mul::make(make_const(UInt(64), type.lanes()),
+                                         Cast::make(UInt(64), new_shape[i])));
+    }
     mem_to_shape[buffer_var.get()] = shape;
   }
 
@@ -152,7 +155,7 @@ public:
       upper_bound = Cast::make(Int(64), upper_bound);
 
       // Looks like a lower bound should always be zero after normalization.
-      Expr lower_bound = make_zero(index.type());
+      Expr lower_bound = make_zero(Int(64));
 
       Expr current_condition =
           And::make(GE::make(index, lower_bound), LT::make(index, upper_bound));

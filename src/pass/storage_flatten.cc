@@ -127,9 +127,9 @@ class StorageFlattener : public IRMutator {
         shape_collector.push_back(
             std::make_pair(e.buffer->data, e.buffer->shape));
         for (size_t i = 0; i < shape_collector.size(); ++i) {
-          body =
-              AttrStmt::make(shape_collector[i].first, ir::attr::buffer_bound,
-                             MakeBound(shape_collector[i].second), body);
+          body = AttrStmt::make(
+              shape_collector[i].first, ir::attr::buffer_bound,
+              MakeBound(e.buffer->dtype, shape_collector[i].second), body);
         }
       }
       return body;
@@ -237,7 +237,7 @@ class StorageFlattener : public IRMutator {
 
       if (create_bound_attributes && ShapeIsValid(e.buffer->shape)) {
         ret = AttrStmt::make(e.buffer->data, ir::attr::buffer_bound,
-                             MakeBound(e.buffer->shape), ret);
+                             MakeBound(e.buffer->dtype, e.buffer->shape), ret);
       }
       return ret;
     }
@@ -277,6 +277,7 @@ class StorageFlattener : public IRMutator {
       const BufferEntry& e = it->second;
       CHECK(!e.released)
           << "Read a buffer that is already out of scope";
+
       if (create_bound_attributes && ShapeIsValid(e.buffer->shape)) {
         shape_collector.push_back(
             std::make_pair(e.buffer->data, e.buffer->shape));
@@ -461,18 +462,22 @@ class StorageFlattener : public IRMutator {
     if (!shape.size())
       return false;
 
-    for (size_t i = 0; i < shape.size(); ++i)
+    for (size_t i = 0; i < shape.size(); ++i) {
       if (!shape[i].defined() || !shape[i].type().is_scalar() ||
-          is_negative_const(shape[i]))
+          is_negative_const(shape[i])) {
         return false;
+      }
+    }
     return true;
   }
 
-  Expr MakeBound(const Array<Expr> &shape) {
+  Expr MakeBound(const Type &type, const Array<Expr> &shape) {
     // We have already checked the shape size to be greater then 0.
-    Expr bound = shape[0];
-    for (size_t i = 1; i < shape.size(); ++i)
-      bound = Mul::make(bound, shape[i]);
+    Expr bound = Mul::make(make_const(shape[0].type(), type.lanes()), shape[0]);
+    for (size_t i = 1; i < shape.size(); ++i) {
+      bound = Mul::make(
+          bound, Mul::make(make_const(bound.type(), type.lanes()), shape[i]));
+    }
     return bound;
   }
   // The buffer assignment map

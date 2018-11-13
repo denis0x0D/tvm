@@ -91,14 +91,15 @@ public:
     if (!new_shape.size())
       return;
     for (size_t i = 0; i < new_shape.size(); ++i) {
-      if (!new_shape.defined() || !new_shape[i].type().is_scalar() ||
+      if (!new_shape[0].defined() || !new_shape[i].type().is_scalar() ||
           is_negative_const(new_shape[i])) {
         return;
       }
     }
 
-    // Make sure we catch the actual shape. The type could has lanes > 1.
-    Expr shape = Cast::make(UInt(64), new_shape[0]);
+    //Scalarize the shape.
+    Expr shape = Mul::make(make_const(UInt(64), type.lanes()),
+                           Cast::make(UInt(64), new_shape[0]));
     for (size_t i = 1; i < new_shape.size(); ++i) {
       // Cast to unsigned to avoid integer overlow at frist.
       shape = Mul::make(shape, Mul::make(make_const(UInt(64), type.lanes()),

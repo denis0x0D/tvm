@@ -102,7 +102,8 @@ class StorageFlattener : public IRMutator {
   }
 
   Stmt Mutate_(const Provide* op, const Stmt& s) final {
-    shape_collector.clear();
+    if (instrument_bound_checkers)
+      shape_collector.clear();
     Stmt stmt = IRMutator::Mutate_(op, s);
     op = stmt.as<Provide>();
     TensorKey key{op->func, op->value_index};
@@ -120,11 +121,15 @@ class StorageFlattener : public IRMutator {
           Call::Intrinsic));
     } else {
       Stmt body = e.buffer.vstore(e.RelIndex(op->args), op->value);
-      shape_collector.push_back(
-          std::make_pair(e.buffer->data, e.buffer->shape));
-      for (size_t i = 0; i < shape_collector.size(); ++i) {
-        body = AttrStmt::make(shape_collector[i].first, ir::attr::buffer_bound,
-                              MakeBound(shape_collector[i].second), body);
+      // Skip if buffer shape size == 0.
+      if (instrument_bound_checkers && e.buffer->shape.size()) {
+        shape_collector.push_back(
+            std::make_pair(e.buffer->data, e.buffer->shape));
+        for (size_t i = 0; i < shape_collector.size(); ++i) {
+          body =
+              AttrStmt::make(shape_collector[i].first, ir::attr::buffer_bound,
+                             MakeBound(shape_collector[i].second), body);
+        }
       }
       return body;
     }
@@ -229,8 +234,10 @@ class StorageFlattener : public IRMutator {
           e.buffer->data, attr::storage_scope,
           StringImm::make(e.buffer->scope), ret);
 
-      ret = AttrStmt::make(e.buffer->data, ir::attr::buffer_bound,
-                           MakeBound(e.buffer->shape), ret);
+      if (instrument_bound_checkers && e.buffer->shape.size()) {
+        ret = AttrStmt::make(e.buffer->data, ir::attr::buffer_bound,
+                             MakeBound(e.buffer->shape), ret);
+      }
       return ret;
     }
   }
@@ -269,9 +276,10 @@ class StorageFlattener : public IRMutator {
       const BufferEntry& e = it->second;
       CHECK(!e.released)
           << "Read a buffer that is already out of scope";
-
-      shape_collector.push_back(
-          std::make_pair(e.buffer->data, e.buffer->shape));
+      if (instrument_bound_checkers && e.buffer->shape.size()) {
+        shape_collector.push_back(
+            std::make_pair(e.buffer->data, e.buffer->shape));
+      }
       return e.buffer.vload(e.RelIndex(op->args), e.buffer->dtype);
     } else {
       return expr;
@@ -449,9 +457,12 @@ class StorageFlattener : public IRMutator {
   };
 
   Expr MakeBound(const Array<Expr> &shape) {
-    Expr bound;
-    // Implement shape.size > 0
-    return shape[0];
+    // We already check the shape size to be greater then 0.
+    Expr bound = shape[0];
+    // FIXME. Cound the shape be less then 0 ? 
+    for (size_t i = 1; i < shape.size(); ++i)
+      bound = And::make(bound, Cast::make(UInt(64), shape[i]));
+    return bound;
   }
   // The buffer assignment map
   // Variable remap
@@ -470,6 +481,8 @@ class StorageFlattener : public IRMutator {
   int cache_line_size_;
   // The current stage is an OpenGL shader.
   bool is_opengl_{false};
+
+  bool instrument_bound_checkers{false};
 };
 
 Stmt StorageFlatten(Stmt stmt,

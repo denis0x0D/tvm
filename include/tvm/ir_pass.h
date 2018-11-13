@@ -240,7 +240,12 @@ Stmt VectorizeLoop(Stmt stmt);
 * \return Instrumented Stmt.
 */
 Stmt InstrumentBoundCheckers(Stmt stmt);
-
+/*!
+* \brief inject bound attribute.
+* \param stmt The statment to be injected.
+* \return Injected Stmt.
+*/
+Stmt InjectBoundAttribute(Stmt stmt);
 /*!
  * \brief Inject virtual thread loops into stmt.
  * \param stmt The statment to be transformed.

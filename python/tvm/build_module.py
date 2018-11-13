@@ -347,6 +347,9 @@ def lower(sch,
             raise ValueError("sch should be either a Schedule or a Stmt")
         stmt = sch
 
+    if cfg.instrument_bound_checkers:
+        stmt = ir_pass.InjectBoundAttribute(stmt)
+
     for f in lower_phase0:
         stmt = f(stmt)
     # Phase 1

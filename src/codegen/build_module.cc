@@ -361,6 +361,8 @@ Stmt BuildStmt(Schedule sch,
   // Phase 0
   auto bounds = schedule::InferBound(sch);
   auto stmt = schedule::ScheduleOps(sch, bounds, false);
+  if (config->instrument_bound_checkers)
+    stmt = ir::InjectBoundAttribute(stmt);
   stmt = ir::InjectPrefetch(stmt);
 
   // Phase 1
@@ -381,6 +383,9 @@ Stmt BuildStmt(Schedule sch,
   stmt = ir::LowerStorageAccessInfo(stmt);
   stmt = ir::RemoveNoOp(stmt);
   stmt = ir::RewriteUnsafeSelect(stmt);
+
+  if (config->instrument_bound_checkers)
+    stmt = ir::InstrumentBoundCheckers(stmt);
 
   return stmt;
 }

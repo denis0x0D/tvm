@@ -169,6 +169,12 @@ public:
   std::unordered_map<const Variable *, Expr> mem_to_shape;
 };
 
+Stmt InjectBoundAttribute(Stmt stmt) {
+  return AttrStmt::make(
+      make_const(UInt(32), 1), ir::attr::create_bound_attributes,
+      StringImm::make("Whether to create bound attributes"), stmt);
+}
+
 Stmt InstrumentBoundCheckers(Stmt stmt) {
   BoundCollector bound_collector;
   bound_collector.Visit(stmt);

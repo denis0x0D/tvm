@@ -562,6 +562,43 @@ llvm::Value* CodeGenCPU::CreateCallPacked(const Call* op) {
   return rvalue;
 }
 
+llvm::Value* CodeGenCPU::CreateCallTracePacked(const Call* op) {
+  CHECK_EQ(op->args.size(), 6U);
+  std::string func_name = op->args[0].as<StringImm>()->value;
+  llvm::Value* handle = GetPackedFuncHandle(func_name);
+  // call the function
+  int64_t begin = op->args[3].as<IntImm>()->value;
+  int64_t end = op->args[4].as<IntImm>()->value;
+  int64_t nargs = end - begin;
+  CHECK_GE(nargs, 0);
+  llvm::Value* stack_value = MakeValue(op->args[1]);
+  llvm::Value* stack_tcode = MakeValue(op->args[2]);
+  llvm::Value* trace_value = MakeValue(op->args[5]);
+  llvm::Value* arg_value = builder_->CreateInBoundsGEP(
+      builder_->CreatePointerCast(
+          stack_value, t_tvm_value_->getPointerTo()), ConstInt32(begin));
+  llvm::Value* arg_tcode = CreateBufferPtr(
+      Int(32), stack_tcode, ConstInt32(begin));
+  llvm::Value* ret_value = builder_->CreateInBoundsGEP(
+      builder_->CreatePointerCast(
+          stack_value, t_tvm_value_->getPointerTo()), ConstInt32(end));
+  llvm::Value* ret_tcode = CreateBufferPtr(
+      Int(32), stack_tcode, ConstInt32(end));
+  CheckCallSuccess(
+      builder_->CreateCall(
+          RuntimeTVMFuncCall(),
+          {handle, arg_value, arg_tcode, ConstInt32(nargs),
+                ret_value, ret_tcode}));
+  Type r_type = op->type;
+  Type r_api_type = ir::APIType(r_type);
+  llvm::Value* rvalue =
+      builder_->CreateAlignedLoad(
+          builder_->CreatePointerCast(
+              ret_value, LLVMType(r_api_type)->getPointerTo()), 8);
+  rvalue = CreateCast(r_api_type, r_type, rvalue);
+  return rvalue;
+}
+
 llvm::Value* CodeGenCPU::RuntimeTVMFuncCall() {
   if (f_tvm_func_call_ != nullptr) return f_tvm_func_call_;
   return GetContextPtr(gv_tvm_func_call_);
@@ -608,6 +645,8 @@ void CodeGenCPU::AddStartupFunction() {
 llvm::Value* CodeGenCPU::CreateIntrinsic(const Call* op) {
   if (op->is_intrinsic(intrinsic::tvm_call_packed_lowered)) {
     return CreateCallPacked(op);
+  } else if (op->is_intrinsic(intrinsic::tvm_call_trace_packed_lowered)) {
+    return CreateCallTracePacked(op);
   } else if (op->is_intrinsic(intrinsic::tvm_static_handle)) {
     return CreateStaticHandle();
   } else if (op->is_intrinsic(intrinsic::tvm_throw_last_error)) {

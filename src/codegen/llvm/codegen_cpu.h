@@ -79,8 +79,13 @@ class CodeGenCPU : public CodeGenLLVM {
   void UnpackClosureData(llvm::Value*cdata,
                          const Array<Var>& fields,
                          std::unordered_map<const Variable*, llvm::Value*>* vmap);
+  // Get the tracing value from the args,
+  // so that value could be returned directly.
+  llvm::Value* GetTracingValue(llvm::Value *args, const int64_t nargs);
   // create call into tvm packed function.
   llvm::Value* CreateCallPacked(const Call* op);
+  // Create trace call into tvm packed function.
+  llvm::Value* CreateCallTracePacked(const Call *op);
   // Create static initialization
   void CreateStaticInit(const std::string& init_fname, const Stmt& body);
   // Create parallel launch

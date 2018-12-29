@@ -562,41 +562,56 @@ llvm::Value* CodeGenCPU::CreateCallPacked(const Call* op) {
   return rvalue;
 }
 
-llvm::Value* CodeGenCPU::CreateCallTracePacked(const Call* op) {
+llvm::Value *CodeGenCPU::CreateCallTracePacked(const Call *op) {
+  using llvm::BasicBlock;
   CHECK_EQ(op->args.size(), 6U);
   std::string func_name = op->args[0].as<StringImm>()->value;
-  llvm::Value* handle = GetPackedFuncHandle(func_name);
-  // call the function
+  llvm::Value *handle = GetPackedFuncHandle(func_name);
   int64_t begin = op->args[3].as<IntImm>()->value;
   int64_t end = op->args[4].as<IntImm>()->value;
   int64_t nargs = end - begin;
   CHECK_GE(nargs, 0);
-  llvm::Value* stack_value = MakeValue(op->args[1]);
-  llvm::Value* stack_tcode = MakeValue(op->args[2]);
-  llvm::Value* trace_value = MakeValue(op->args[5]);
-  llvm::Value* arg_value = builder_->CreateInBoundsGEP(
-      builder_->CreatePointerCast(
-          stack_value, t_tvm_value_->getPointerTo()), ConstInt32(begin));
-  llvm::Value* arg_tcode = CreateBufferPtr(
-      Int(32), stack_tcode, ConstInt32(begin));
-  llvm::Value* ret_value = builder_->CreateInBoundsGEP(
-      builder_->CreatePointerCast(
-          stack_value, t_tvm_value_->getPointerTo()), ConstInt32(end));
-  llvm::Value* ret_tcode = CreateBufferPtr(
-      Int(32), stack_tcode, ConstInt32(end));
-  CheckCallSuccess(
-      builder_->CreateCall(
-          RuntimeTVMFuncCall(),
-          {handle, arg_value, arg_tcode, ConstInt32(nargs),
-                ret_value, ret_tcode}));
+  llvm::Value *stack_value = MakeValue(op->args[1]);
+  llvm::Value *stack_tcode = MakeValue(op->args[2]);
+  llvm::Value *traced_value = MakeValue(op->args[5]);
+  llvm::Value *arg_value = builder_->CreateInBoundsGEP(
+      builder_->CreatePointerCast(stack_value, t_tvm_value_->getPointerTo()),
+      ConstInt32(begin));
+  llvm::Value *arg_tcode =
+      CreateBufferPtr(Int(32), stack_tcode, ConstInt32(begin));
+  llvm::Value *ret_value = builder_->CreateInBoundsGEP(
+      builder_->CreatePointerCast(stack_value, t_tvm_value_->getPointerTo()),
+      ConstInt32(end));
+  llvm::Value *ret_tcode =
+      CreateBufferPtr(Int(32), stack_tcode, ConstInt32(end));
+  BasicBlock *end_block = CheckCallSuccess(builder_->CreateCall(
+      RuntimeTVMFuncCall(),
+      {handle, arg_value, arg_tcode, ConstInt32(nargs), ret_value, ret_tcode}));
+  BasicBlock *update_block =
+      BasicBlock::Create(*ctx_, "update_block", function_);
+  BasicBlock *continue_block =
+      BasicBlock::Create(*ctx_, "continue_block", function_);
+  llvm::Value *check_value =
+      builder_->CreatePointerCast(ret_value, t_int_->getPointerTo());
+  check_value = builder_->CreateAlignedLoad(check_value, 8);
+  llvm::Value *icmp = builder_->CreateICmpNE(
+      check_value, llvm::Constant::getNullValue(check_value->getType()));
+  builder_->CreateCondBr(icmp, update_block, continue_block);
+  builder_->SetInsertPoint(update_block);
   Type r_type = op->type;
   Type r_api_type = ir::APIType(r_type);
-  llvm::Value* rvalue =
-      builder_->CreateAlignedLoad(
-          builder_->CreatePointerCast(
-              ret_value, LLVMType(r_api_type)->getPointerTo()), 8);
+  llvm::Value *rvalue = builder_->CreateAlignedLoad(
+      builder_->CreatePointerCast(ret_value,
+                                  LLVMType(r_api_type)->getPointerTo()),
+      8);
   rvalue = CreateCast(r_api_type, r_type, rvalue);
-  return rvalue;
+  builder_->CreateBr(continue_block);
+  builder_->SetInsertPoint(continue_block);
+
+  llvm::PHINode *phi_rvalue = builder_->CreatePHI(traced_value->getType(), 2);
+  phi_rvalue->addIncoming(rvalue, update_block);
+  phi_rvalue->addIncoming(traced_value, end_block);
+  return phi_rvalue;
 }
 
 llvm::Value* CodeGenCPU::RuntimeTVMFuncCall() {
